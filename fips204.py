@@ -58,6 +58,31 @@ ML_DSA_PARAM = {
     "ML-DSA-87" : (13, 60, 256, 2**19, (ML_DSA_Q-1)//32, 8, 7, 2, 120, 75)
 }
 
+def bytes_to_c_style_literal(b, use_hex=False):
+    if type(b[0]) is list:
+        res = ""
+        for i in range(len(b)):
+            res += f"{{ {bytes_to_c_style_literal(b[i], use_hex)} }}"
+            if i < len(b) - 1:
+                res += ",\n"
+
+        return res
+    else:
+        if use_hex:
+            return ', '.join([ f'0x{c:02x}' for c in b ])
+        else:
+            return ', '.join([ f'{c}' for c in b ])
+    
+def eta_minus_s_vector(eta, s):
+    if type(s[0]) is list:
+        return [ eta_minus_s_vector(eta, si) for si in s ]
+    return [ (eta - si) for si in s ]
+
+def polynomial_mod_q(poly):
+    if type(poly[0]) is list:
+        return [ polynomial_mod_q(p) for p in poly ]
+    return [ x + ML_DSA_Q if x < 0 else x for x in poly ]
+
 class ML_DSA:
 
     def __init__(self, param='ML-DSA-65'):
@@ -68,6 +93,18 @@ class ML_DSA:
         self.n = ML_DSA_N
         (self.d, self.tau, self.lam, self.gam1, self.gam2, self.k, self.ell,
             self.eta, self.beta, self.omega) = ML_DSA_PARAM[param]
+
+    def commutativity_test(self):
+        import random
+        for i in range(10000):
+            x = []
+            for j in range(256):
+                x += [ random.randint(0, self.q - 1) ]
+            y = self.ntt([(e * 5) % self.q for e in x])
+            z = [(e * 5) % self.q for e in self.ntt(x)]
+
+            assert(y == z)
+        print("True!")
 
     #   3.7 Use of Symmetric Cryptography
     def h(self, s, l):
@@ -172,43 +209,43 @@ class ML_DSA:
     def keygen_internal(self, xi, param=None):
         if param != None:
             self.__init__(param)
-        # print('# keygen_internal()', param)
-        # print('# seed:', xi.hex())
+        print('# keygen_internal()', param)
+        print('# seed:', bytes_to_c_style_literal(xi, True))
         se = self.h(xi + self.integer_to_bytes(self.k, 1) + self.integer_to_bytes(self.ell, 1), 128)
         rho = se[0:32]
         rhop = se[32:96]
         kk = se[96:128]
-        # print('# rho:', rho.hex())
-        # print('# rhoPrime:', rhop.hex())
-        # print('# k:', kk.hex())
+        print('# rho:', bytes_to_c_style_literal(rho, True))
+        print('# rhoPrime:', bytes_to_c_style_literal(rhop, True))
+        print('# k:', bytes_to_c_style_literal(kk, True))
 
         ah = self.expand_a(rho)
-        # print('# aHat:', ah)
+        print('# aHat:', bytes_to_c_style_literal(ah))
         (s1, s2) = self.expand_s(rhop)
-        # print('# s1:', s1)
-        # print('# s2:', s2)
+        print('# s1:', bytes_to_c_style_literal(polynomial_mod_q(s1))) # eta_minus_s_vector(self.eta, s1)))
+        print('# s2:', bytes_to_c_style_literal(polynomial_mod_q(s2))) # eta_minus_s_vector(self.eta, s2)))
 
         s1h = [ self.ntt(v) for v in s1 ]
-        # print('# s1Hat:', s1h)
+        print('# s1Hat:', bytes_to_c_style_literal(s1h))
 
         t = self.matrix_vector_ntt(ah, s1h)
-        # print('# aHat*s1Hat:', t)
+        print('# aHat*s1Hat:', bytes_to_c_style_literal(t))
 
         t = [ self.add(self.ntt_inverse(t[i]), s2[i])
             for i in range(self.k) ]
-        # print('# t:', t)
+        print('# t:', bytes_to_c_style_literal(t))
 
         (t1, t0) = self.power2round(t)
-        # print('# t0:', t0)
-        # print('# t1:', t1)
+        print('# t0:', bytes_to_c_style_literal(polynomial_mod_q(t0))) # eta_minus_s_vector(4096, t0)))
+        print('# t1:', bytes_to_c_style_literal(t1))
 
         pk = self.pk_encode(rho, t1)
-        # print('# pk:', pk.hex())
+        print('# pk:', bytes_to_c_style_literal(pk, True))
         tr = self.h(pk, 64)
         # print('# tr:', tr.hex())
 
         sk = self.sk_encode(rho, kk, tr, s1, s2, t0)
-        # print('# sk:', sk.hex())
+        print('# sk:', bytes_to_c_style_literal(sk, True))
 
         return pk, sk
 
@@ -221,72 +258,81 @@ class ML_DSA:
         (rho, kk, tr, s1, s2, t0) = self.sk_decode(sk)
 
         # print('# sign_internal()', param)
-        # print('# rho:', rho.hex())
-        # print('# tr:', tr.hex())
-        # print('# rnd:', rnd.hex())
+        print('# sk:', bytes_to_c_style_literal(sk, True))
+        print('# message:', bytes_to_c_style_literal(mp, True))
+        print('# rho:', bytes_to_c_style_literal(rho, True))
+        print('# k:', bytes_to_c_style_literal(kk, True))
+        print('# tr:', bytes_to_c_style_literal(tr, True))
+        print('# rnd:', bytes_to_c_style_literal(rnd, True))
+
+        print('# s1:', bytes_to_c_style_literal(s1))
+        print('# s2:', bytes_to_c_style_literal(s2))
+        print('# t0:', bytes_to_c_style_literal(t0))
 
         s1h = [ self.ntt(s1i) for s1i in s1 ]
-        # print('# s1Hat:', s1h)
+        print('# s1Hat:', bytes_to_c_style_literal(s1h)) #eta_minus_s_vector(self.eta, s1h)))
         s2h = [ self.ntt(s2i) for s2i in s2 ]
-        # print('# s2Hat:', s2h)
+        print('# s2Hat:', bytes_to_c_style_literal(s2h))
         t0h = [ self.ntt(t0i) for t0i in t0 ]
-        # print('# t0Hat:', t0h)
+        print('# t0Hat:', bytes_to_c_style_literal(t0h)) # eta_minus_s_vector(4096, t0h)))
 
         ah = self.expand_a(rho)
-        # print('# aHat:', ah)
+        print('# aHat:', bytes_to_c_style_literal(ah))
 
         mu = self.h(tr + mp, 64)
-        # print('# mu:', mu.hex())
+        print('# mu:', bytes_to_c_style_literal(mu, True))
 
         rhopp = self.h(kk + rnd + mu, 64)
-        # print('# rhoPrime:', rhopp.hex())
+        print('# rhoPrimePrime:', bytes_to_c_style_literal(rhopp, True))
 
         kappa = 0
         (z, h) = (None, None)
         while (z, h) == (None, None):
             y = self.expand_mask(rhopp, kappa)
-            # print('# y:', y)
+            print(f'# y {kappa}:', bytes_to_c_style_literal(polynomial_mod_q(y)))
 
             yh = [ self.ntt(yi) for yi in y ]
-            # print('# NTT(y):', yh)
+            print('# NTT(y):', bytes_to_c_style_literal(yh))
 
             w = self.matrix_vector_ntt(ah, yh)
-            # print('# aHat*NTT(y):', w)
+            print(f'# aHat*NTT(y) {kappa}:', bytes_to_c_style_literal(w))
             w = [ self.ntt_inverse(wi) for wi in w ]
-            # print('# w:', w)
+            print(f'# w {kappa}:', bytes_to_c_style_literal(w))
 
             w1 = self.high_bits(w)
-            # print('# w1:', w1)
+            print(f'# w1 {kappa}:', bytes_to_c_style_literal(w1))
 
             w1t = self.w1_encode(w1)
-            # print('# w1Encode:', w1t.hex())
+            print(f'# w1Encode {kappa}:', bytes_to_c_style_literal(w1t, True))
 
             ct = self.h(mu + w1t, self.lam // 4)
-            # print('# cTilde:', ct.hex())
+            print('# cTilde:', ct.hex())
 
             c = self.sample_in_ball(ct)
-            # print('# c:', c)
+            print(f'# c {kappa}:', bytes_to_c_style_literal(polynomial_mod_q(c)))
 
             ch = self.ntt(c)
-            # print('# cHat:', ch)
+            print('# cHat:', bytes_to_c_style_literal(ch))
 
             cs1 = [ self.ntt_inverse(self.mul_ntt(ch, s1i)) for s1i in s1h ]
-            # print('# cs1:', cs1)
+            print(f'# cs1 {kappa}:', bytes_to_c_style_literal(cs1))
             cs2 = [ self.ntt_inverse(self.mul_ntt(ch, s2i)) for s2i in s2h ]
-            # print('# cs2:', cs2)
+            print(f'# cs2 {kappa}:', bytes_to_c_style_literal(cs2))
 
             z = [ self.add(y[i], cs1[i]) for i in range(self.ell) ]
-            # print('# z:', z)
+            print(f'# z {kappa}:', bytes_to_c_style_literal(z))
 
             r0 = [ self.sub(w[i], cs2[i]) for i in range(self.k) ]
+            print(f'# r0 {kappa}:', bytes_to_c_style_literal(r0))
+
             r0 = self.low_bits(r0)
-            # print('# r0:', r0)
+            print(f'# low_bits(r0) {kappa}:', bytes_to_c_style_literal(polynomial_mod_q(r0)))
 
             z_norm = self.inf_norm(z)
-            # print('# ||z||:', z_norm)
+            print(f'# ||z|| {kappa}:', z_norm)
 
             r0_norm = self.inf_norm(r0)
-            # print('# ||r0||:', r0_norm)
+            print(f'# ||r0|| {kappa}:', r0_norm)
 
             if (z_norm >= self.gam1 - self.beta or
                 r0_norm >= self.gam2 - self.beta):
@@ -295,26 +341,26 @@ class ML_DSA:
             else:
                 ct0 = [ self.ntt_inverse(self.mul_ntt(ch, t0i))
                             for t0i in t0h ]
-                # print('# ct0:', ct0)
+                print(f'# ct0 {kappa}:', bytes_to_c_style_literal(ct0))
                 ct0n = [ self.neg(ct0i) for ct0i in ct0 ]
-                # print('# -ct0:', ct0n)
+                print(f'# -ct0 {kappa}:', bytes_to_c_style_literal(polynomial_mod_q(ct0n)))
                 h_r = [ self.add(self.sub(w[i], cs2[i]), ct0[i])
                         for i in range(self.k) ]
-                # print('# w - cs2 + ct0:', h_r)
+                print('# w - cs2 + ct0:', bytes_to_c_style_literal(h_r))
                 h = self.make_hint(ct0n, h_r)
-                # print('# h', h)
+                print(f'# h {kappa}:', bytes_to_c_style_literal(h))
                 h_wt = self.weight(h)
-                # print('# ||h||:', h_wt)
+                print(f'# ||h|| {kappa}:', h_wt)
 
                 ct0_norm = self.inf_norm(ct0)
-                # print('# ||ct0||:', ct0_norm)
+                print(f'# ||ct0|| {kappa}:', ct0_norm)
                 if ct0_norm >= self.gam2 or h_wt > self.omega:
                     (z, h) = (None, None)
             kappa += self.ell
 
         z = [ [ self.modpm(x, self.q) for x in zi ] for zi in z ]
         sig = self.sig_encode(ct, z, h)
-        # print('# sig:', sig.hex())
+        print('# sig:', bytes_to_c_style_literal(sig, True))
 
         return sig
 
@@ -324,54 +370,61 @@ class ML_DSA:
         if param != None:
             self.__init__(param)
 
+        print('# pk: ', bytes_to_c_style_literal(pk, True))
+        print('# message:', bytes_to_c_style_literal(mp, True))
+        print('# sig: ', bytes_to_c_style_literal(sig, True))
+
         (rho, t1) = self.pk_decode(pk)
         (ct, z, h) = self.sig_decode(sig)
-        # print('# rho:', rho.hex())
-        # print('# t1:', t1)
-        # print('# cTilde:', ct.hex())
-        # print('# z:', z)
+        print('# rho:', bytes_to_c_style_literal(rho, True))
+        print('# t1:', bytes_to_c_style_literal(t1))
+        print('# NTT(t1): ', bytes_to_c_style_literal([ self.ntt(t1i) for t1i in t1 ]))
+        print('# cTilde:', bytes_to_c_style_literal(ct, True))
+        print('# z:', bytes_to_c_style_literal(polynomial_mod_q(z)))
         if h == None:
             return False
+        
+        print('# h:', bytes_to_c_style_literal(h))
 
         ah = self.expand_a(rho)
-        # print('# aHat:', ah)
+        print('# aHat:', bytes_to_c_style_literal(ah))
 
         tr = self.h(pk, 64)
-        # print('# tr:', tr.hex())
+        print('# tr:', bytes_to_c_style_literal(tr, True))
 
         mu = self.h(tr + mp, 64)
-        # print('# mu:', mu.hex())
+        print('# mu:', bytes_to_c_style_literal(mu, True))
 
         c = self.sample_in_ball(ct)
-        # print('# c:', c)
+        print('# c:', bytes_to_c_style_literal(c))
 
         zh = [ self.ntt(zi) for zi in z ]
         # print('# zHat:', zh)
 
         wp = self.matrix_vector_ntt(ah, zh)
-        # print('# aHat*NTT(z):', wp)
+        print('# aHat*NTT(z):', bytes_to_c_style_literal(wp))
 
         th = [ self.ntt([ x << self.d  for x in t1i ]) for t1i in t1 ]
-        # print('# NTT(t1*2^d):', th)
+        print('# NTT(t1*2^d):', bytes_to_c_style_literal(th))
 
         ch = self.ntt(c)
         # print('# NTT(c):', ch)
 
         th = [ self.mul_ntt(ch, thi) for thi in th ]
-        # print('# NTT(c)*NTT(t1*2^d):', th)
+        print('# NTT(c)*NTT(t1*2^d):', bytes_to_c_style_literal(th))
 
         wp = [ self.ntt_inverse(self.sub(wp[i], th[i]))
                 for i in range(self.k) ]
-        # print('# wPrimeApprox:', wp)
+        print('# wPrimeApprox:', bytes_to_c_style_literal(wp))
 
         w1p = self.use_hint(h, wp)
-        # print('# w1Prime;', w1p)
+        print('# w1Prime;', bytes_to_c_style_literal(w1p))
 
         ctp = self.h(mu + self.w1_encode(w1p), self.lam // 4)
-        # print('# cTildePrime:', ctp.hex())
+        print('# cTildePrime:', bytes_to_c_style_literal(ctp, True))
 
         z_norm = self.inf_norm(z)
-        # print('# ||z||:', z_norm)
+        print('# ||z||:', z_norm)
 
         return z_norm < self.gam1 - self.beta and ct == ctp
 
@@ -769,7 +822,10 @@ class ML_DSA:
 
     def make_hint(self, z, r):
         r1 = self.high_bits(r)
-        v1 = self.high_bits(self.add(r, z))
+        print("high_bits(r): ", bytes_to_c_style_literal(r1))
+        r_plus_z = self.add(r, z)
+        print("r+z: ", bytes_to_c_style_literal(r_plus_z))
+        v1 = self.high_bits(r_plus_z)
         return self.neq(r1, v1)
 
     #   Algorithm 40, UseHint(h, r)
